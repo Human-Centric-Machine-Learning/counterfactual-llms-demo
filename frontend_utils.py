@@ -43,11 +43,32 @@ tokens_style = """
         .token-span-cf:hover {
             filter: brightness(1.4) !important;
         }
+
+        .token-button,
+        .token-span,
+        .token-span-cf {
+            font-family: monospace !important;
+            font-size: 14px !important;
+            font-weight: 400 !important;
+            line-height: 1.5 !important;
+        }
     </style>
     """
 
 
 editable_prefix = f'id="editable" contenteditable="true" {scrollable_prefix} white-space: pre-wrap;'
+
+token_selection_js = """
+    // HTML updates can rerun this initializer; replace the previous listener.
+    element.onclick = (event) => {
+        const token = event.target.closest(".token-button");
+        if (!token) return;
+        trigger("select_token", {
+            prefix_token: Number(token.dataset.prefixToken),
+            start_from: Number(token.dataset.startFrom)
+        });
+    };
+"""
 
 def scrollable_text(content):
     return f'<div {scrollable_prefix} white-space: pre-wrap;">{html.escape(content)}</div>'
@@ -87,13 +108,9 @@ def render_edited_tokens(current_token_list, factual_token_list, mark_token=None
         suffix_color = "#3a3f5c"
         if mark_token is not None and i+len(prefix_tokens)==int(mark_token):
             suffix_color = "#007bff"
-        rendered += f"""<button class='token-button' style='background-color: {suffix_color};' 
-                onclick="
-                    document.querySelector('#hidden_input textarea').value = '{i+len(factual_token_list)-len(suffix_tokens)}';
-                    document.querySelector('#hidden_input textarea').dispatchEvent(new Event('input', {{ bubbles: true }}));
-                    document.querySelector('#hidden_input_prefix textarea').value = '{i+len(prefix_tokens)}';
-                    document.querySelector('#hidden_input_prefix textarea').dispatchEvent(new Event('input', {{ bubbles: true }}));
-            ">{html.escape(token)}
+        rendered += f"""<button type='button' class='token-button' style='background-color: {suffix_color};'
+                data-start-from='{i+len(factual_token_list)-len(suffix_tokens)}'
+                data-prefix-token='{i+len(prefix_tokens)}'>{html.escape(token)}
             </button>
             """
 
@@ -123,22 +140,29 @@ def render_tokens_cf(token_list, factual_token_list, partial_token_list, start_f
 
     return f'{tokens_style}' + rendered
 
-def update_factual_view_edit(action, token_list, factual_tokens, current_view, prefix_token=None):
-    # print(token_list)
+def update_factual_view_edit(action, partial_response, token_list, factual_tokens, current_view):
     if token_list is None:
-        return current_view, action
-    if action == "Edit Response ✍️":
-        return editable_text("".join(token_list)), "Show Tokens 🔍"
+        view = current_view
+    elif action == "Edit Response ✍️":
+        view = editable_text("".join(token_list))
+        action = "Show Tokens 🔍"
     elif action == "Show Tokens 🔍":
-        return scrollable_tokens_factual(token_list, factual_tokens, prefix_token), "Edit Response ✍️"
+        view, token_list = retokenize_edit(action, partial_response, token_list, factual_tokens)
+        action = "Edit Response ✍️"
+    else:
+        view = current_view
+    return view, action, token_list, 0, None, gr.update(interactive=False)
     
 def reset_factual_view(action, factual_tokens, current_view):
     if factual_tokens is None:
-        return current_view
-    if action == "Show Tokens 🔍":
-        return editable_text("".join(factual_tokens))
+        view = current_view
+    elif action == "Show Tokens 🔍":
+        view = editable_text("".join(factual_tokens))
     elif action == "Edit Response ✍️":
-        return scrollable_tokens_factual(factual_tokens, factual_tokens)
+        view = scrollable_tokens_factual(factual_tokens, factual_tokens)
+    else:
+        view = current_view
+    return view, factual_tokens, 0, None, gr.update(interactive=False)
 
 
 def update_counterfactual_view(show_tokens, response, token_list, partial_tokens, factual_tokens, start_from_generated, current_view):
@@ -168,6 +192,12 @@ def update_clicked_token(current_tokens, factual_tokens, mark_token):
     timestamp = int(time.time() * 1000)
     html_block = f'<div {scrollable_prefix} data-timestamp="{timestamp}">{render_edited_tokens(current_tokens, factual_tokens, mark_token)}</div>'
     return gr.update(value=html_block)
+
+def select_factual_token(current_tokens, factual_tokens, event: gr.EventData):
+    prefix_token = int(event.prefix_token)
+    start_from = int(event.start_from)
+    view = update_clicked_token(current_tokens, factual_tokens, prefix_token)
+    return view, prefix_token, start_from, gr.update(interactive=True)
 
 
 # def copy_tokens_to_partial_response(token_list, start_from):
